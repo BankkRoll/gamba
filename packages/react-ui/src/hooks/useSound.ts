@@ -1,8 +1,8 @@
 import { signal } from '@preact/signals-react'
 import React from 'react'
-import * as Tone from 'tone'
+import { Gain, Player, getContext, start } from 'tone'
 
-const materGain = signal(.5)
+const masterGain = signal(0.5)
 
 interface PlaySoundParams {
   playbackRate?: number
@@ -14,86 +14,84 @@ export interface GambaAudioStore {
   set: (gain: number) => void
 }
 
-export const useGambaAudioStore = () => {
-  return {
-    masterGain: materGain.value,
-    set: (gain: number) => {
-      materGain.value = gain
-    },
-  }
-}
+export const useGambaAudioStore = () => ({
+  masterGain: masterGain.value,
+  set: (gain: number) => (masterGain.value = gain),
+})
 
 class GambaSound {
-  player = new Tone.Player
-  gain = new Tone.Gain
+  player?: Player
+  gain?: Gain
   ready = false
-  private url?: string
+  private url: string
 
-  constructor(url: string, autoPlay = false) {
+  constructor(url: string) {
     this.url = url
-    this.player.load(url)
-      .then((x) => {
-        this.ready = x.loaded
+    this.initSound()
+  }
+
+  async initSound(autoPlay = false) {
+    await start()
+    this.player = new Player(this.url).toDestination()
+    this.gain = new Gain().toDestination()
+    try {
+      await this.player.load(this.url)
+      this.ready = true
+      if (this.player && this.gain) {
         this.player.connect(this.gain)
-        this.gain.toDestination()
         if (autoPlay) {
           this.player.loop = true
           this.player.start()
         }
-      })
-      .catch((err) => console.error('Failed to load audio', err))
+      }
+    } catch (err) {
+      console.error('Failed to load audio', err)
+    }
   }
 
-  play({ playbackRate = 1, gain = .1 }: PlaySoundParams = {}) {
-    try {
+  play({ playbackRate = 1, gain = 0.1 }: PlaySoundParams = {}) {
+    if (this.ready && this.player && this.gain) {
       this.player.playbackRate = playbackRate
-      this.gain.set({ gain })
+      this.gain.gain.value = gain
       this.player.start()
-    } catch (err) {
-      console.warn('Failed to play sound', this.url, err)
+    } else {
+      console.warn('Sound not ready or AudioContext not resumed yet')
     }
   }
 }
 
-export function useSound<T extends {[s: string]: string}>(definition: T) {
-  const sources = Object.keys(definition)
+export function useSound<T extends { [s: string]: string }>(definition: T) {
+  const [isContextReady, setContextReady] = React.useState(false)
+
+  React.useEffect(() => {
+    const resumeContext = async () => {
+      await getContext().resume()
+      setContextReady(true)
+    }
+    resumeContext()
+  }, [])
 
   const sounds = React.useMemo(
     () =>
-      Object
-        .entries(definition)
-        .map(([id, url]) => {
-          const sound = new GambaSound(url)
-          return { id, sound }
-        })
-        .reduce((prev, { id, sound }) => ({
-          ...prev,
-          [id]: sound,
-        }), {} as Record<keyof T, GambaSound>)
-    ,
-    [...sources],
-  )
-
-  React.useEffect(
-    () => {
-      return () => {
-        Object.entries(sounds).map(([_, s]) => s.player.stop())
-      }
-    },
-    [sounds],
+      Object.entries(definition)
+        .map(([id, url]) => ({ id, sound: new GambaSound(url) }))
+        .reduce(
+          (prev, { id, sound }) => ({ ...prev, [id]: sound }),
+          {} as Record<keyof T, GambaSound>,
+        ),
+    [definition, isContextReady],
   )
 
   const play = React.useCallback(
-    (s: keyof typeof sounds, x?: PlaySoundParams) => {
-      const gain = x?.gain ?? 1
-      const opts: PlaySoundParams = { ...x, gain: gain * materGain.value }
-      sounds[s].play(opts)
+    (s: keyof typeof sounds, params?: PlaySoundParams) => {
+      if (isContextReady && sounds[s]) {
+        sounds[s].play(params)
+      } else {
+        console.warn('AudioContext is not ready. User interaction needed to resume.')
+      }
     },
-    [sounds],
+    [sounds, isContextReady],
   )
 
-  return {
-    play,
-    sounds,
-  }
+  return { play, sounds }
 }
