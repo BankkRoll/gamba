@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react'
-import { Player, Gain, context } from 'tone'
+import { Player, Gain } from 'tone'
 import { StoreApi, create } from 'zustand'
 
 interface PlaySoundParams {
@@ -50,17 +50,9 @@ class Sound {
 
   play({ playbackRate = 1, gain = .1 }: PlaySoundParams = {}) {
     try {
-      if (context.state === "suspended") {
-        context.resume().then(() => {
-          this.player.playbackRate = playbackRate
-          this.gain.set({ gain })
-          this.player.start()
-        })
-      } else {
-        this.player.playbackRate = playbackRate
-        this.gain.set({ gain })
-        this.player.start()
-      }
+      this.player.playbackRate = playbackRate
+      this.gain.set({ gain })
+      this.player.start()
     } catch (err) {
       console.warn('Failed to play sound', this.url, err)
     }
